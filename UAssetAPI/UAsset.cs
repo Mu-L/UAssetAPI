@@ -1,6 +1,5 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
-using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -421,6 +420,23 @@ namespace UAssetAPI
         public byte[] ValorantGarbageData;
 
         /// <summary>
+        /// Some garbage data that appears to be present in certain games (e.g. Sea of Thieves)
+        /// null = not present
+        /// empty array = present, but serialize as offset = 0, length = 0
+        /// </summary>
+        public byte[] SeaOfThievesGarbageData = null;
+
+        /// <summary>
+        /// Sea of Thieves garbage data offset
+        /// </summary>
+        internal int SeaOfThievesGarbageDataOffset = -1;
+
+        /// <summary>
+        /// Sea of Thieves garbage data length
+        /// </summary>
+        internal short SeaOfThievesGarbageDataLength = -1;
+
+        /// <summary>
         /// Data about previous versions of this package.
         /// </summary>
         public List<FGenerationInfo> Generations;
@@ -480,9 +496,11 @@ namespace UAssetAPI
         public FString LocalizationId;
 
         /// <summary>Number of names used in this package</summary>
+        [JsonProperty]
         internal int SoftObjectPathsCount = 0;
 
         /// <summary>Location into the file on disk for the name data</summary>
+        [JsonProperty]
         internal int SoftObjectPathsOffset = 0;
 
         /// <summary>Number of gatherable text data items in this package</summary>
@@ -644,16 +662,17 @@ namespace UAssetAPI
             NameCount = reader.ReadInt32();
             NameOffset = reader.ReadInt32();
 
-            if (!IsFilterEditorOnly && ObjectVersion >= ObjectVersion.VER_UE4_ADDED_PACKAGE_SUMMARY_LOCALIZATION_ID)
-            {
-                LocalizationId = reader.ReadFString();
-            }
-
             if (ObjectVersionUE5 >= ObjectVersionUE5.ADD_SOFTOBJECTPATH_LIST)
             {
                 SoftObjectPathsCount = reader.ReadInt32();
                 SoftObjectPathsOffset = reader.ReadInt32();
             }
+
+            if (!IsFilterEditorOnly && ObjectVersion >= ObjectVersion.VER_UE4_ADDED_PACKAGE_SUMMARY_LOCALIZATION_ID)
+            {
+                LocalizationId = reader.ReadFString();
+            }
+
             if (ObjectVersion >= ObjectVersion.VER_UE4_SERIALIZE_TEXT_IN_PACKAGES)
             {
                 GatherableTextDataCount = reader.ReadInt32();
@@ -746,6 +765,14 @@ namespace UAssetAPI
 
             AssetRegistryDataOffset = reader.ReadInt32();
             BulkDataStartOffset = reader.ReadInt64();
+            if (BulkDataStartOffset < -1e14 || BulkDataStartOffset > 1e14)
+            {
+                // probably Sea of Thieves, etc.
+                reader.BaseStream.Position -= sizeof(long);
+                SeaOfThievesGarbageDataOffset = reader.ReadInt32();
+                SeaOfThievesGarbageDataLength = reader.ReadInt16();
+                BulkDataStartOffset = reader.ReadInt64();
+            }
 
             if (ObjectVersion >= ObjectVersion.VER_UE4_WORLD_LEVEL_INFO)
             {
@@ -947,6 +974,21 @@ namespace UAssetAPI
             else
             {
                 doWeHaveAssetRegistryData = false;
+            }
+
+            // SeaOfThievesGarbageData
+            if (SeaOfThievesGarbageDataOffset > 0 && SeaOfThievesGarbageDataLength > 0)
+            {
+                reader.BaseStream.Seek(SeaOfThievesGarbageDataOffset, SeekOrigin.Begin);
+                SeaOfThievesGarbageData = reader.ReadBytes(SeaOfThievesGarbageDataLength);
+            }
+            else if (SeaOfThievesGarbageDataOffset == 0 || SeaOfThievesGarbageDataLength == 0)
+            {
+                SeaOfThievesGarbageData = Array.Empty<byte>();
+            }
+            else
+            {
+                SeaOfThievesGarbageData = null;
             }
 
             BulkData = [];
@@ -1261,6 +1303,19 @@ namespace UAssetAPI
             }
 
             writer.Write(AssetRegistryDataOffset);
+            if (SeaOfThievesGarbageData != null)
+            {
+                if (SeaOfThievesGarbageData.Length == 0)
+                {
+                    writer.Write((int)0);
+                    writer.Write((short)0);
+                }
+                else
+                {
+                    writer.Write((int)(BulkDataStartOffset - SeaOfThievesGarbageData.Length));
+                    writer.Write((short)SeaOfThievesGarbageData.Length);
+                }
+            }
             writer.Write(BulkDataStartOffset);
 
             if (ObjectVersion >= ObjectVersion.VER_UE4_WORLD_LEVEL_INFO)
@@ -1604,7 +1659,10 @@ namespace UAssetAPI
                         writer.Write(us.Extras);
                     }
                 }
-                
+
+                // SeaOfThievesGarbageData
+                if (SeaOfThievesGarbageData != null && SeaOfThievesGarbageData.Length > 0) writer.Write(SeaOfThievesGarbageData);
+
                 this.BulkDataStartOffset = (int)writer.BaseStream.Position;
                 writer.Write(BulkData);
 
@@ -1615,11 +1673,20 @@ namespace UAssetAPI
                     for (int i = 0; i < this.Exports.Count; i++)
                     {
                         Export us = this.Exports[i];
-                        long nextLoc = this.BulkDataStartOffset;
-                        if ((this.Exports.Count - 1) > i) nextLoc = categoryStarts[i + 1];
+
+                        long nextStarting = -1;
+                        if ((Exports.Count - 1) > i)
+                        {
+                            nextStarting = categoryStarts[i + 1];
+                        }
+                        else
+                        {
+                            nextStarting = this.BulkDataStartOffset;
+                            if (this.SeaOfThievesGarbageData != null) nextStarting -= this.SeaOfThievesGarbageData.Length;
+                        }
 
                         us.SerialOffset = categoryStarts[i];
-                        us.SerialSize = nextLoc - categoryStarts[i];
+                        us.SerialSize = nextStarting - categoryStarts[i];
 
                         us.WriteExportMapEntry(writer);
                     }
