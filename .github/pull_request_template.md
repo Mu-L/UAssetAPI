@@ -6,7 +6,7 @@
 
 If this pull request is intended to fix an existing issue, reference the existing GitHub issue number here or create a new issue and reference the new issue number here.
 
-We currently do not accept AI-generated code on the UAssetAPI or UAssetGUI repositories. UAssetAPI is mature, stable software, so all changes must be thoroughly tested and reviewed by a human. Pull requests containing AI-generated code, text, documentation, or other AI-generated assets will not be reviewed. -->
+We currently do not accept AI-generated code on the UAssetAPI or UAssetGUI repositories. UAssetAPI is mature, stable software, so all changes must be thoroughly tested and reviewed by a human. Pull requests containing AI-generated code, PR title/description text, other text, documentation, or other AI-generated assets will not be reviewed. -->
 
 ## Type of change
 
